@@ -1,94 +1,122 @@
-import joblib
 import streamlit as st
 import pandas as pd
 import numpy as np
 
 # page config
 st.set_page_config(
-    page_title="Wine Quality Prediction",
-    layout="centered"
+    page_title = "Chocolate Sales Revenue Prediction",
+    layout = "centered"
 )
 
-st.title("Wine Quality Prediction")
-st.caption("Predict wine quality using red and white wine datasets.")
-
-
+st.title("Chocolate Sales Revenue Prediction")
+st.caption("Predict sales amount based on product, country, sales person, and shipment volume.")
 
 # data
 @st.cache_data
 def load_data():
-    red = pd.read_csv("winequality-red.csv", sep = ";")
-    white = pd.read_csv("winequality-white.csv", sep = ";")
+    df = pd.read_csv("Chocolate Sales (2).csv")
 
-    red["wine_type"] = "red"
-    white["wine_type"] = "white"
+    # parse date
+    df["Date"] = pd.to_datetime(df["Date"], errors = "coerce")
 
-    return pd.concat([red, white], ignore_index=True)
+    # clean Amount
+    if df["Amount"].dtype == "object":
+        df["Amount"] = (
+            df["Amount"]
+            .str.replace("$", "", regex  =False)
+            .str.replace(",", "", regex = False)
+            .astype(float)
+        )
+
+    # extract simple date feature
+    df["Month"] = df["Date"].dt.month
+    df["Year"] = df["Date"].dt.year
+
+    # drop rows with missing essential fields
+    df = df.dropna(subset = ["Amount", "Boxes Shipped", "Month", "Year", "Sales Person", "Country", "Product"])
+
+    return df
 
 df = load_data()
 
 
 
-#train
+# train 
 @st.cache_resource
 def train_model(df: pd.DataFrame):
     from sklearn.model_selection import train_test_split
-    from sklearn.pipeline import Pipeline
     from sklearn.compose import ColumnTransformer
-    from sklearn.preprocessing import OneHotEncoder
-    from sklearn.metrics import mean_absolute_error, r2_score
-    from sklearn.ensemble import RandomForestRegressor
 
-    target = "quality"
-    X = df.drop(columns=[target])
+    target = "Amount"
+    X = df.drop(columns = [target])
     y = df[target]
 
-    cat_cols = ["wine_type"]
-    num_cols = [c for c in X.columns if c not in cat_cols]
+    # define columns
+    cat_cols = ["Sales Person", "Country", "Product"]
+    num_cols = ["Boxes Shipped", "Month", "Year"]
+
+    # preprocessing
+    from sklearn.preprocessing import OneHotEncoder
 
     preprocessor = ColumnTransformer(
         transformers = [
-            ("cat", OneHotEncoder(handle_unknown="ignore"), cat_cols),
+            ("cat", OneHotEncoder(handle_unknown = "ignore"), cat_cols),
             ("num", "passthrough", num_cols),
         ]
     )
 
+    # model
+    from sklearn.ensemble import RandomForestRegressor
     model = RandomForestRegressor(
-        n_estimators=400,
-        random_state=42,
-        n_jobs=-1
+        n_estimators = 300,
+        random_state = 42,
+        n_jobs = -1
     )
-
+    from sklearn.pipeline import Pipeline
     pipeline = Pipeline([
-        ("preprocess", allow := preprocessor),
+        ("preprocess", preprocessor),
         ("model", model),
     ])
 
+
+    # split
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        X[cat_cols + num_cols],
+        y,
+        test_size = 0.2,
+        random_state = 42
     )
 
+    # evaluate
+    from sklearn.metrics import mean_absolute_error, r2_score
     pipeline.fit(X_train, y_train)
     preds = pipeline.predict(X_test)
 
     metrics = {
-        "mae": mean_absolute_error(y_test, preds),
-        "r2": r2_score(y_test, preds),
-        "rows": len(df)
+        "mae": float(mean_absolute_error(y_test, preds)),
+        "r2": float(r2_score(y_test, preds)),
+        "rows": int(len(df)),
     }
 
-    stats = {
-        col: {
+    # stats for sliders
+    stats = {}
+    for col in num_cols:
+        stats[col] = {
             "min": float(df[col].min()),
             "max": float(df[col].max()),
-            "median": float(df[col].median())
+            "median": float(df[col].median()),
         }
-        for col in num_cols
+
+    # options for dropdowns
+    options = {
+        "Sales Person": sorted(df["Sales Person"].dropna().unique().tolist()),
+        "Country": sorted(df["Country"].dropna().unique().tolist()),
+        "Product": sorted(df["Product"].dropna().unique().tolist()),
     }
 
-    return pipeline, num_cols, metrics, stats
+    return pipeline, cat_cols, num_cols, metrics, stats, options
 
-pipeline, num_cols, metrics, stats = train_model(df)
+pipeline, cat_cols, num_cols, metrics, stats, options = train_model(df)
 
 
 
@@ -98,48 +126,63 @@ with st.sidebar:
     show_metrics = st.toggle("Show model metrics", True)
 
 
-# user inputs 
-wine_type = st.selectbox("Wine Type", ["red", "white"])
 
-st.subheader("Chemical Properties")
+# user input
+st.subheader("Inputs")
 
-inputs = {}
-for col in num_cols:
-    s = stats[col]
-    rng = s["max"] - s["min"]
+sales_person = st.selectbox("Sales Person", options["Sales Person"])
+country = st.selectbox("Country", options["Country"])
+product = st.selectbox("Product", options["Product"])
 
-    if rng <= 1:
-        step = 0.01
-    elif rng <= 10:
-        step = 0.1
-    else:
-        step = 0.5
+boxes_stats = stats["Boxes Shipped"]
+boxes_shipped = st.number_input(
+    "Boxes Shipped",
+    min_value = int(boxes_stats["min"]),
+    max_value = int(boxes_stats["max"]),
+    value = int(boxes_stats["median"]),
+    step = 1
+)
 
-    inputs[col] = st.slider(
-        col,
-        min_value = s["min"],
-        max_value = s["max"],
-        value = s["median"],
-        step = step
-    )
+month_stats = stats["Month"]
+month = st.slider(
+    "Month",
+    min_value = int(month_stats["min"]),
+    max_value = int(month_stats["max"]),
+    value = int(month_stats["median"]),
+    step = 1
+)
+
+year_stats = stats["Year"]
+year = st.slider(
+    "Year",
+    min_value = int(year_stats["min"]),
+    max_value = int(year_stats["max"]),
+    value = int(year_stats["median"]),
+    step = 1
+)
 
 
 
-# predict
-if st.button("Predict Wine Quality"):
-    input_df = pd.DataFrame([{**inputs, "wine_type": wine_type}])
+# predictt
+if st.button("Predict Sales Amount"):
+    input_df = pd.DataFrame([{
+        "Sales Person": sales_person,
+        "Country": country,
+        "Product": product,
+        "Boxes Shipped": boxes_shipped,
+        "Month": month,
+        "Year": year
+    }])
+
     prediction = pipeline.predict(input_df)[0]
-
-    st.success(f"Predicted quality (raw): {prediction:.2f}")
-    st.info(f"Predicted quality (rounded): {int(np.round(prediction))}")
+    st.success(f"Predicted Sales Amount: ${prediction:,.2f}")
 
 
 
-
-
+# outpusts
 if show_metrics:
     st.subheader("Model Metrics")
-    st.write(f"Mean Absolute Error: {metrics['mae']:.3f}")
+    st.write(f"Mean Absolute Error: {metrics['mae']:.2f}")
     st.write(f"R² Score: {metrics['r2']:.3f}")
     st.write(f"Rows used: {metrics['rows']}")
 
@@ -149,16 +192,17 @@ if show_data:
 
 
 
-# page thing
+
+# the styling of steamlit
 st.markdown(
     """
     <style>
     .stApp {
         background: linear-gradient(
             180deg,
-            rgba(30,30,30,0.35),
-            rgba(0,0,0,0.55)
-        ),
+            rgba(30,30,30,0.20),
+            rgba(0,0,0,0.35)
+        );
     }
     </style>
     """,
